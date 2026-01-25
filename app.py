@@ -22,23 +22,17 @@ if "generated_ppt_binary" not in st.session_state:
     st.session_state.generated_ppt_binary = None
 if "generated_filename" not in st.session_state:
     st.session_state.generated_filename = ""
-# Key ID to force-reset the uploader
 if "uploader_id" not in st.session_state:
     st.session_state.uploader_id = 0
 
 # --- 2. CALLBACK FUNCTIONS ---
 def add_entry_callback():
-    """Adds the item and resets inputs by incrementing the uploader ID."""
-    # 1. Capture values using the specific widget keys
-    # Note: We construct the key dynamically for the uploader
     uploader_key = f"uploader_{st.session_state.uploader_id}"
     uploaded_file = st.session_state.get(uploader_key)
-    
     description = st.session_state.get("entry_desc")
     category = st.session_state.get("cat_selector")
     custom_cat = st.session_state.get("custom_cat_input")
 
-    # 2. Logic to add item
     final_cat = category
     if category == "Other..." and custom_cat:
         final_cat = custom_cat
@@ -50,22 +44,15 @@ def add_entry_callback():
             "image": uploaded_file
         })
         
-        # 3. RESET INPUTS
-        # Clear text area
+        # Reset Inputs
         st.session_state["entry_desc"] = ""
-        # Force a fresh uploader by changing its ID
         st.session_state.uploader_id += 1
-        
-        # Clear generated file since data changed
         st.session_state.generated_ppt_binary = None
     else:
         st.error("Please provide both an image and a description.")
 
 def save_edit_callback():
-    """Saves changes and exits edit mode."""
     idx = st.session_state.edit_index
-    
-    # Get values
     uploader_key = f"uploader_{st.session_state.uploader_id}"
     uploaded_file = st.session_state.get(uploader_key)
     description = st.session_state.get("entry_desc")
@@ -76,7 +63,6 @@ def save_edit_callback():
     if category == "Other..." and custom_cat:
         final_cat = custom_cat
 
-    # Use new image if uploaded, otherwise keep old one
     current_item = st.session_state.report_items[idx]
     final_img = uploaded_file if uploaded_file else current_item["image"]
 
@@ -86,7 +72,6 @@ def save_edit_callback():
         "image": final_img
     }
     
-    # Exit edit mode & Reset uploader
     st.session_state.edit_index = None
     st.session_state["entry_desc"] = ""
     st.session_state.uploader_id += 1
@@ -105,9 +90,7 @@ def delete_item_callback(index):
 
 def edit_item_callback(index):
     st.session_state.edit_index = index
-    # Pre-fill the description box
     st.session_state["entry_desc"] = st.session_state.report_items[index]["text"]
-    # Ensure uploader is fresh
     st.session_state.uploader_id += 1
     st.session_state.generated_ppt_binary = None
 
@@ -197,8 +180,6 @@ with st.container():
             st.image(edit_item["image"], width=150, caption="Current Image")
             st.caption("Leave upload blank to keep current image.")
         
-        # --- FIX: Dynamic Key for Uploader ---
-        # This prevents the "ValueAssignmentNotAllowedError" by creating a fresh widget every reset
         dynamic_key = f"uploader_{st.session_state.uploader_id}"
         st.file_uploader("Upload Image (Single)", type=["png", "jpg", "jpeg"], key=dynamic_key)
 
@@ -212,12 +193,17 @@ with st.container():
         st.button("Add Entry", type="primary", on_click=add_entry_callback)
 
 
-# --- 6. PREVIEW LIST ---
+# --- 6. PREVIEW LIST (REVERSED & STYLED) ---
 if st.session_state.report_items:
     st.markdown("---")
     st.subheader(f"Current Entries ({len(st.session_state.report_items)})")
+    st.caption("Newest entries are shown at the top.")
     
-    for i, item in enumerate(st.session_state.report_items):
+    # --- CHANGE: Reversed loop so newest is always first ---
+    # We use enumerate, but we convert to list and reverse to keep the correct 'Page X' number
+    items_with_index = list(enumerate(st.session_state.report_items))
+    
+    for i, item in reversed(items_with_index):
         with st.container():
             col_img, col_det, col_act = st.columns([2, 5, 1])
             
@@ -228,14 +214,37 @@ if st.session_state.report_items:
                 st.markdown(f"### Page {i+1}")
                 st.markdown(f"**Category:** {item['category']}")
                 
-                # --- FIX: Yellow Highlight for Missing Description ---
+                # --- CHANGE: Styled Description Block ---
                 if item['text'] == "":
-                    # Using HTML span with background color for "Highlighter" effect
-                    st.markdown('**Description:** <span style="background-color: #ffd700; color: black; padding: 2px 6px; border-radius: 4px; font-weight: bold;">No description yet</span>', unsafe_allow_html=True)
+                    # Yellow warning pill
+                    st.markdown(
+                        """
+                        <div style="margin-top: 10px;">
+                            <span style="font-size: 0.8em; font-weight: bold; color: #555; text-transform: uppercase; letter-spacing: 1px;">Description</span>
+                            <br>
+                            <span style="background-color: #ffd700; color: black; padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 0.9em;">NO DESCRIPTION YET</span>
+                        </div>
+                        """, 
+                        unsafe_allow_html=True
+                    )
                 else:
-                    st.markdown(f"**Description:** {item['text']}")
+                    # Clean gray box for the description text
+                    st.markdown(
+                        f"""
+                        <div style="margin-top: 10px;">
+                            <span style="font-size: 0.8em; font-weight: bold; color: #555; text-transform: uppercase; letter-spacing: 1px;">Description</span>
+                            <div style="background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-top: 5px; border-left: 3px solid #ccc;">
+                                {item['text']}
+                            </div>
+                        </div>
+                        """, 
+                        unsafe_allow_html=True
+                    )
             
             with col_act:
+                # Spacer to push buttons down slightly
+                st.write("") 
+                st.write("")
                 st.button("Edit", key=f"ed_{i}", on_click=edit_item_callback, args=(i,))
                 st.button("Delete", key=f"del_{i}", on_click=delete_item_callback, args=(i,))
             
@@ -248,7 +257,6 @@ if st.session_state.report_items:
         if st.button("Generate Report", type="primary", use_container_width=True):
             prs = Presentation()
 
-            # Title Slide
             slide = prs.slides.add_slide(prs.slide_layouts[0])
             slide.shapes.title.text = report_title
             slide.placeholders[1].text = report_subtitle
@@ -266,12 +274,10 @@ if st.session_state.report_items:
             for index, item in enumerate(st.session_state.report_items):
                 slide = prs.slides.add_slide(prs.slide_layouts[6])
 
-                # Background
                 background = slide.background
                 background.fill.solid()
                 background.fill.fore_color.rgb = RGBColor(200, 210, 215)
 
-                # Header
                 header = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, MARGIN_X, TOP_Y, COL_WIDTH, HEADER_HEIGHT)
                 header.fill.solid()
                 header.fill.fore_color.rgb = RGBColor(176, 196, 222)
@@ -285,7 +291,6 @@ if st.session_state.report_items:
                 header.text_frame.margin_left = Inches(0.2)
                 header.text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
 
-                # Text Box
                 desc_box = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, MARGIN_X, TOP_Y + HEADER_HEIGHT, COL_WIDTH, BODY_HEIGHT)
                 desc_box.fill.solid()
                 desc_box.fill.fore_color.rgb = RGBColor(255, 255, 255)
@@ -302,7 +307,6 @@ if st.session_state.report_items:
                 p.alignment = PP_ALIGN.LEFT
                 tf.word_wrap = True
 
-                # Image
                 img_x = MARGIN_X + COL_WIDTH + GAP
                 try:
                     item["image"].seek(0)
@@ -312,7 +316,6 @@ if st.session_state.report_items:
                 pic.line.color.rgb = RGBColor(0, 0, 0)
                 pic.line.width = Pt(1)
 
-                # Footer
                 footer_y = SLIDE_HEIGHT - Inches(0.5)
                 footer_box = slide.shapes.add_textbox(MARGIN_X, footer_y, Inches(4), Inches(0.5))
                 fp = footer_box.text_frame.paragraphs[0]

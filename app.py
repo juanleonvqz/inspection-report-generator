@@ -218,12 +218,46 @@ if st.session_state.report_items:
             st.text_area("Description", value=item["text"], height=120, key=f"desc_{item_id}", on_change=update_item_text, args=(item_id,))
 
         with actions:
-            st.button("Top", on_click=move_top, args=(i,), use_container_width=True, disabled=i==0)
-            st.button("Up", on_click=move_up, args=(i,), use_container_width=True, disabled=i==0)
-            st.button("Down", on_click=move_down, args=(i,), use_container_width=True, disabled=i==len(st.session_state.report_items)-1)
-            st.button("Bottom", on_click=move_bottom, args=(i,), use_container_width=True, disabled=i==len(st.session_state.report_items)-1)
+            st.button(
+                "Top",
+                key=f"top_{item_id}",
+                on_click=move_top,
+                args=(i,),
+                use_container_width=True,
+                disabled=(i == 0),
+            )
+            st.button(
+                "Up",
+                key=f"up_{item_id}",
+                on_click=move_up,
+                args=(i,),
+                use_container_width=True,
+                disabled=(i == 0),
+            )
+            st.button(
+                "Down",
+                key=f"down_{item_id}",
+                on_click=move_down,
+                args=(i,),
+                use_container_width=True,
+                disabled=(i == len(st.session_state.report_items) - 1),
+            )
+            st.button(
+                "Bottom",
+                key=f"bottom_{item_id}",
+                on_click=move_bottom,
+                args=(i,),
+                use_container_width=True,
+                disabled=(i == len(st.session_state.report_items) - 1),
+            )
             st.divider()
-            st.button("Delete", on_click=delete_item_callback, args=(i,), use_container_width=True)
+            st.button(
+                "Delete",
+                key=f"delete_{item_id}",
+                on_click=delete_item_callback,
+                args=(i,),
+                use_container_width=True,
+            )
 
 # --------------------------------------------------
 # Generate PPT

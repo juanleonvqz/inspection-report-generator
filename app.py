@@ -9,14 +9,12 @@ from datetime import datetime
 from uuid import uuid4
 from PIL import Image
 
-
 # --------------------------------------------------
 # Page setup
 # --------------------------------------------------
 st.set_page_config(page_title="Field Inspection Report Generator", layout="wide")
 st.title("Field Inspection Report Generator")
 st.markdown("---")
-
 
 # --------------------------------------------------
 # Session state
@@ -32,11 +30,10 @@ if "uploader_id" not in st.session_state:
 if "debug_log" not in st.session_state:
     st.session_state.debug_log = []
 
-# Ensure stable IDs for all items (important for widget keys + reorder)
+# Ensure stable IDs for all items
 for item in st.session_state.report_items:
     if "id" not in item:
         item["id"] = uuid4().hex
-
 
 # --------------------------------------------------
 # Helpers
@@ -45,38 +42,27 @@ def log(msg: str):
     ts = datetime.now().strftime("%H:%M:%S")
     st.session_state.debug_log.append(f"[{ts}] {msg}")
 
-
 def get_image_wh(uploaded_file):
-    """
-    Returns (width, height) for a Streamlit UploadedFile / file-like.
-    Resets seek pointer so later usage (ppt add_picture) still works.
-    """
+    """Return (w, h) and reset pointer so ppt add_picture still works."""
     try:
         uploaded_file.seek(0)
     except Exception:
         pass
-
     img = Image.open(uploaded_file)
     w, h = img.size
-
     try:
         uploaded_file.seek(0)
     except Exception:
         pass
-
     return w, h
 
-
 def add_border(slide, x, y, w, h, rgb=RGBColor(0, 0, 0), width_pt=1):
-    """
-    Reliable border around pictures: add a transparent rectangle over the image.
-    """
+    """Reliable border for pictures: draw transparent rectangle over image."""
     border = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, x, y, w, h)
-    border.fill.background()  # transparent
+    border.fill.background()  # transparent fill
     border.line.color.rgb = rgb
     border.line.width = Pt(width_pt)
     return border
-
 
 # --------------------------------------------------
 # Callbacks
@@ -101,35 +87,26 @@ def add_entry_callback():
             "text": description,
             "image": uploaded_file
         })
-
-        # Reset
         st.session_state["entry_desc"] = ""
         st.session_state.uploader_id += 1
         st.session_state.generated_ppt_binary = None
     else:
         st.error("Please provide both an image and a description.")
 
-
 def delete_item_callback(index):
     st.session_state.report_items.pop(index)
     st.session_state.generated_ppt_binary = None
 
-
 def update_item_text(item_id):
-    key = f"desc_{item_id}"
     for it in st.session_state.report_items:
         if it["id"] == item_id:
-            it["text"] = (st.session_state.get(key) or "").strip()
+            it["text"] = (st.session_state.get(f"desc_{item_id}") or "").strip()
             break
     st.session_state.generated_ppt_binary = None
 
-
 def update_item_category(item_id):
-    sel_key = f"cat_sel_{item_id}"
-    other_key = f"cat_other_{item_id}"
-
-    selected = st.session_state.get(sel_key, "Exterior")
-    custom = (st.session_state.get(other_key) or "").strip()
+    selected = st.session_state.get(f"cat_sel_{item_id}", "Exterior")
+    custom = (st.session_state.get(f"cat_other_{item_id}") or "").strip()
 
     final_cat = selected
     if selected == "Other..." and custom:
@@ -141,20 +118,16 @@ def update_item_category(item_id):
         if it["id"] == item_id:
             it["category"] = final_cat
             break
-
     st.session_state.generated_ppt_binary = None
 
-
 def update_item_image(item_id):
-    img_key = f"img_{item_id}"
-    uploaded = st.session_state.get(img_key)
+    uploaded = st.session_state.get(f"img_{item_id}")
     if uploaded:
         for it in st.session_state.report_items:
             if it["id"] == item_id:
                 it["image"] = uploaded
                 break
         st.session_state.generated_ppt_binary = None
-
 
 def move_item(from_index, to_index):
     items = st.session_state.report_items
@@ -166,34 +139,28 @@ def move_item(from_index, to_index):
     items.insert(to_index, item)
     st.session_state.generated_ppt_binary = None
 
+def move_up(i):
+    if i > 0:
+        move_item(i, i - 1)
 
-def move_up(index):
-    if index > 0:
-        move_item(index, index - 1)
+def move_down(i):
+    if i < len(st.session_state.report_items) - 1:
+        move_item(i, i + 1)
 
+def move_top(i):
+    if i > 0:
+        move_item(i, 0)
 
-def move_down(index):
-    if index < len(st.session_state.report_items) - 1:
-        move_item(index, index + 1)
-
-
-def move_top(index):
-    if index > 0:
-        move_item(index, 0)
-
-
-def move_bottom(index):
+def move_bottom(i):
     last = len(st.session_state.report_items) - 1
-    if index < last:
-        move_item(index, last)
-
+    if i < last:
+        move_item(i, last)
 
 # --------------------------------------------------
-# Sidebar (settings + debug toggle)
+# Sidebar
 # --------------------------------------------------
 with st.sidebar:
     st.header("Report Settings")
-
     report_title = st.text_input("Report Title", "Field Inspection Report")
     date_option = st.selectbox(
         "Date Format",
@@ -214,7 +181,7 @@ with st.sidebar:
         elif date_option == "Date Only (MM-DD-YYYY)":
             report_subtitle = selected_date.strftime("%m-%d-%Y")
             filename_suffix = selected_date.strftime("%m-%d-%Y")
-        elif date_option == "Date & Time":
+        else:
             selected_time = st.time_input("Select Time", datetime.now().time())
             final_dt = datetime.combine(selected_date, selected_time)
             report_subtitle = final_dt.strftime("%m-%d-%Y %H:%M")
@@ -222,7 +189,7 @@ with st.sidebar:
 
     st.divider()
     st.caption("**Preview:**")
-    st.info(f"{report_subtitle}")
+    st.info(report_subtitle)
 
     clean_title = report_title.replace(" ", "_")
     final_filename = f"{clean_title}_{filename_suffix}.pptx"
@@ -234,7 +201,6 @@ with st.sidebar:
         value=False,
         help="Shows PPT build logs for troubleshooting (safe for normal users to ignore)."
     )
-
 
 # --------------------------------------------------
 # Batch upload
@@ -261,7 +227,6 @@ with st.expander("Batch Upload (Add Multiple Images)", expanded=False):
         else:
             st.warning("No files selected.")
 
-
 # --------------------------------------------------
 # Quick add
 # --------------------------------------------------
@@ -273,7 +238,6 @@ with c1:
     st.selectbox("Category", standard_options + ["Other..."], key="cat_selector")
     if st.session_state.get("cat_selector") == "Other...":
         st.text_input("Enter Custom Category", key="custom_cat_input")
-
     st.text_area("Description", height=150, placeholder="Enter observation here...", key="entry_desc")
 
 with c2:
@@ -282,9 +246,8 @@ with c2:
 
 st.button("Add Entry", type="primary", on_click=add_entry_callback)
 
-
 # --------------------------------------------------
-# Current entries (cards + inline edit + reorder)
+# Current entries
 # --------------------------------------------------
 if st.session_state.report_items:
     st.markdown("---")
@@ -294,7 +257,6 @@ if st.session_state.report_items:
     for i, item in enumerate(st.session_state.report_items):
         item_id = item["id"]
 
-        # Card header (force dark text, regardless of theme)
         st.markdown(
             f"""
             <div style="
@@ -372,74 +334,15 @@ if st.session_state.report_items:
                 placeholder="Type the observation here...",
             )
 
-            if (item.get("text", "") or "").strip() == "":
-                st.markdown(
-                    """
-                    <div style="
-                        display:inline-block;
-                        background:#fff3cd;
-                        color:#664d03;
-                        padding:4px 10px;
-                        border-radius:999px;
-                        font-size:12px;
-                        font-weight:800;
-                        border:1px solid #ffe69c;
-                    ">
-                        Missing description
-                    </div>
-                    """,
-                    unsafe_allow_html=True
-                )
-
         with col_actions:
-            st.write("")
-            st.write("")
-
-            st.button(
-                "Top",
-                key=f"top_{item_id}",
-                on_click=move_top,
-                args=(i,),
-                use_container_width=True,
-                disabled=(i == 0),
-            )
-            st.button(
-                "Up",
-                key=f"up_{item_id}",
-                on_click=move_up,
-                args=(i,),
-                use_container_width=True,
-                disabled=(i == 0),
-            )
-            st.button(
-                "Down",
-                key=f"down_{item_id}",
-                on_click=move_down,
-                args=(i,),
-                use_container_width=True,
-                disabled=(i == len(st.session_state.report_items) - 1),
-            )
-            st.button(
-                "Bottom",
-                key=f"bottom_{item_id}",
-                on_click=move_bottom,
-                args=(i,),
-                use_container_width=True,
-                disabled=(i == len(st.session_state.report_items) - 1),
-            )
-
+            st.button("Top", key=f"top_{item_id}", on_click=move_top, args=(i,), use_container_width=True, disabled=(i == 0))
+            st.button("Up", key=f"up_{item_id}", on_click=move_up, args=(i,), use_container_width=True, disabled=(i == 0))
+            st.button("Down", key=f"down_{item_id}", on_click=move_down, args=(i,), use_container_width=True, disabled=(i == len(st.session_state.report_items) - 1))
+            st.button("Bottom", key=f"bottom_{item_id}", on_click=move_bottom, args=(i,), use_container_width=True, disabled=(i == len(st.session_state.report_items) - 1))
             st.divider()
-
-            st.button(
-                "Delete",
-                key=f"delete_{item_id}",
-                on_click=delete_item_callback,
-                args=(i,),
-                use_container_width=True
-            )
+            st.button("Delete", key=f"delete_{item_id}", on_click=delete_item_callback, args=(i,), use_container_width=True)
 
         st.divider()
-
 
 # --------------------------------------------------
 # Debug log panel
@@ -455,14 +358,12 @@ if debug_mode:
             use_container_width=True
         )
 
-
 # --------------------------------------------------
 # Generate PPT
 # --------------------------------------------------
 if st.session_state.report_items:
     if st.session_state.generated_ppt_binary is None:
         if st.button("Generate Report", type="primary", use_container_width=True):
-            # reset logs each generation run
             st.session_state.debug_log = []
             log("Starting PPT generation...")
 
@@ -473,9 +374,15 @@ if st.session_state.report_items:
             slide.shapes.title.text = report_title
             slide.placeholders[1].text = report_subtitle
 
+            # Constants (footer position SAME for portrait & landscape)
             SLIDE_W = Inches(10)
             SLIDE_H = Inches(7.5)
             M = Inches(0.5)
+
+            # Keep footer at the same Y for both layouts
+            FOOTER_H = Inches(0.50)                 # same feel as your vertical layout
+            FOOTER_Y = SLIDE_H - FOOTER_H           # puts top of footer at 7.0"
+            CONTENT_BOTTOM = FOOTER_Y - Inches(0.15)  # content must stay above this
 
             header_color = RGBColor(176, 196, 222)
             border_color = RGBColor(0, 0, 0)
@@ -500,7 +407,7 @@ if st.session_state.report_items:
                 log(f"Page {index+1}: image {w}x{h}, ratio={ratio:.2f}, landscape={is_landscape}")
 
                 if not is_landscape:
-                    # ===== Portrait layout: text left, image right =====
+                    # ===== Portrait layout: header + desc left, image right =====
                     TOP_Y = Inches(0.7)
                     GAP = Inches(0.2)
                     COL = Inches(4.4)
@@ -527,7 +434,6 @@ if st.session_state.report_items:
                     desc.fill.solid()
                     desc.fill.fore_color.rgb = RGBColor(255, 255, 255)
                     desc.line.color.rgb = border_color
-
                     tf = desc.text_frame
                     tf.clear()
                     tf.text = item.get("text", "")
@@ -546,50 +452,54 @@ if st.session_state.report_items:
                         item["image"].seek(0)
                     except Exception:
                         pass
-
                     slide.shapes.add_picture(item["image"], img_x, TOP_Y, width=COL, height=IMG_H)
                     add_border(slide, img_x, TOP_Y, COL, IMG_H, rgb=border_color, width_pt=1)
 
                 else:
-                    # ===== Landscape layout: header top, wide image, desc bottom =====
-                    TOP_Y = Inches(0.6)
+                    # ===== Landscape layout: image, then category, then description (all above footer) =====
+                    TOP_Y = Inches(0.7)
                     FULL_W = SLIDE_W - (M * 2)
-                    HEAD = Inches(0.8)
-                    IMG_H = Inches(4.35)
-                    DESC_H = Inches(1.35)
                     GAP = Inches(0.15)
 
-                    # Header full width
-                    header = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, M, TOP_Y, FULL_W, HEAD)
-                    header.fill.solid()
-                    header.fill.fore_color.rgb = header_color
-                    header.line.color.rgb = border_color
-                    header.text = item["category"]
-                    header.text_frame.margin_left = Inches(0.2)
-                    header.text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
-                    p = header.text_frame.paragraphs[0]
-                    p.font.bold = True
-                    p.font.size = Pt(26)
-                    p.font.color.rgb = RGBColor(0, 0, 0)
-                    p.alignment = PP_ALIGN.LEFT
+                    CAT_H = Inches(0.60)
+                    DESC_H = Inches(1.35)
 
-                    # Wide image
-                    img_y = TOP_Y + HEAD + GAP
+                    # Fit the image height dynamically so we never collide with footer
+                    # TOP_Y + IMG_H + GAP + CAT_H + GAP + DESC_H must be <= CONTENT_BOTTOM
+                    max_img_h = CONTENT_BOTTOM - (TOP_Y + GAP + CAT_H + GAP + DESC_H)
+                    IMG_H = max(Inches(2.75), min(Inches(4.75), max_img_h))  # keep within nice bounds
+
+                    IMG_Y = TOP_Y
+                    CAT_Y = IMG_Y + IMG_H + GAP
+                    DESC_Y = CAT_Y + CAT_H + GAP
+
+                    # Image wide
                     try:
                         item["image"].seek(0)
                     except Exception:
                         pass
+                    slide.shapes.add_picture(item["image"], M, IMG_Y, width=FULL_W, height=IMG_H)
+                    add_border(slide, M, IMG_Y, FULL_W, IMG_H, rgb=border_color, width_pt=1)
 
-                    slide.shapes.add_picture(item["image"], M, img_y, width=FULL_W, height=IMG_H)
-                    add_border(slide, M, img_y, FULL_W, IMG_H, rgb=border_color, width_pt=1)
+                    # Category under image
+                    cat_box = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, M, CAT_Y, FULL_W, CAT_H)
+                    cat_box.fill.solid()
+                    cat_box.fill.fore_color.rgb = header_color
+                    cat_box.line.color.rgb = border_color
+                    cat_box.text = item["category"]
+                    cat_box.text_frame.margin_left = Inches(0.2)
+                    cat_box.text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
+                    p = cat_box.text_frame.paragraphs[0]
+                    p.font.bold = True
+                    p.font.size = Pt(22)
+                    p.font.color.rgb = RGBColor(0, 0, 0)
+                    p.alignment = PP_ALIGN.LEFT
 
-                    # Description bottom
-                    desc_y = img_y + IMG_H + GAP
-                    desc = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, M, desc_y, FULL_W, DESC_H)
+                    # Description under category
+                    desc = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, M, DESC_Y, FULL_W, DESC_H)
                     desc.fill.solid()
                     desc.fill.fore_color.rgb = RGBColor(255, 255, 255)
                     desc.line.color.rgb = border_color
-
                     tf = desc.text_frame
                     tf.clear()
                     tf.text = item.get("text", "")
@@ -602,23 +512,21 @@ if st.session_state.report_items:
                     p.font.color.rgb = RGBColor(0, 0, 0)
                     p.alignment = PP_ALIGN.LEFT
 
-                # Footer (same for both)
-                footer_y = SLIDE_H - Inches(0.5)
-
-                footer_box = slide.shapes.add_textbox(M, footer_y, Inches(6), Inches(0.5))
+                # Footer (same placement for BOTH layouts)
+                footer_box = slide.shapes.add_textbox(M, FOOTER_Y, Inches(6), FOOTER_H)
                 fp = footer_box.text_frame.paragraphs[0]
                 fp.text = report_title
                 fp.font.size = Pt(10)
                 fp.font.color.rgb = RGBColor(80, 80, 80)
 
-                page_box = slide.shapes.add_textbox(SLIDE_W - M - Inches(2), footer_y, Inches(2), Inches(0.5))
+                page_box = slide.shapes.add_textbox(SLIDE_W - M - Inches(2), FOOTER_Y, Inches(2), FOOTER_H)
                 pp = page_box.text_frame.paragraphs[0]
                 pp.text = f"Page {index + 1}"
                 pp.font.size = Pt(10)
                 pp.font.color.rgb = RGBColor(80, 80, 80)
                 pp.alignment = PP_ALIGN.RIGHT
 
-            # Save once (after all slides)
+            # Save once
             binary = io.BytesIO()
             prs.save(binary)
             binary.seek(0)
@@ -626,7 +534,6 @@ if st.session_state.report_items:
             st.session_state.generated_ppt_binary = binary
             st.session_state.generated_filename = final_filename
             log("PPT generation complete.")
-
             st.rerun()
 
     else:

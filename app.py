@@ -72,8 +72,9 @@ with st.sidebar:
 
 
 # --- 3. BATCH UPLOAD SECTION (NEW) ---
-with st.expander("📂 Batch Upload (Add Multiple Images)", expanded=False):
+with st.expander("Batch Upload (Add Multiple Images)", expanded=False):
     st.write("Select all images in your folder and drag them here to add them all at once.")
+    st.write("Works best on Computer.")
     batch_files = st.file_uploader("Select Multiple Images", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
     
     if st.button("Add All Batch Images", type="primary"):
@@ -103,7 +104,7 @@ edit_item = (
 )
 
 with st.container():
-    st.markdown("### " + (f"Editing Entry #{st.session_state.edit_index + 1}" if is_editing else "➕ Add Single Entry"))
+    st.markdown("### " + (f"Editing Entry #{st.session_state.edit_index + 1}" if is_editing else "Add Single Entry"))
 
     c1, c2 = st.columns([1, 1])
 

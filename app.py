@@ -456,61 +456,71 @@ if st.session_state.report_items:
                     add_border(slide, img_x, TOP_Y, COL, IMG_H, rgb=border_color, width_pt=1)
 
                 else:
-                    # ===== Landscape layout: image, then category, then description (all above footer) =====
-                    TOP_Y = Inches(0.7)
-                    FULL_W = SLIDE_W - (M * 2)
-                    GAP = Inches(0.15)
-
-                    CAT_H = Inches(0.60)
-                    DESC_H = Inches(1.35)
-
-                    # Fit the image height dynamically so we never collide with footer
-                    # TOP_Y + IMG_H + GAP + CAT_H + GAP + DESC_H must be <= CONTENT_BOTTOM
-                    max_img_h = CONTENT_BOTTOM - (TOP_Y + GAP + CAT_H + GAP + DESC_H)
-                    IMG_H = max(Inches(2.75), min(Inches(4.75), max_img_h))  # keep within nice bounds
-
-                    IMG_Y = TOP_Y
-                    CAT_Y = IMG_Y + IMG_H + GAP
-                    DESC_Y = CAT_Y + CAT_H + GAP
-
-                    # Image wide
-                    try:
-                        item["image"].seek(0)
-                    except Exception:
-                        pass
-                    slide.shapes.add_picture(item["image"], M, IMG_Y, width=FULL_W, height=IMG_H)
-                    add_border(slide, M, IMG_Y, FULL_W, IMG_H, rgb=border_color, width_pt=1)
-
-                    # Category under image
-                    cat_box = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, M, CAT_Y, FULL_W, CAT_H)
-                    cat_box.fill.solid()
-                    cat_box.fill.fore_color.rgb = header_color
-                    cat_box.line.color.rgb = border_color
-                    cat_box.text = item["category"]
-                    cat_box.text_frame.margin_left = Inches(0.2)
-                    cat_box.text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
-                    p = cat_box.text_frame.paragraphs[0]
+                    # ===== Landscape layout (requested):
+                    # Category + Description together (top), image BELOW them, footer stays same spot =====
+                
+                    TOP_Y = Inches(0.7)          # same as portrait
+                    FULL_W = SLIDE_W - (M * 2)   # full width usable
+                    GAP = Inches(0.2)
+                
+                    # Make Category + Description look like your portrait left stack
+                    HEAD = Inches(0.8)           # same header height feel
+                    DESC_H = Inches(1.45)        # tune this if you want more/less text space
+                
+                    # Header full width, same Y as portrait header
+                    header = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, M, TOP_Y, FULL_W, HEAD)
+                    header.fill.solid()
+                    header.fill.fore_color.rgb = header_color
+                    header.line.color.rgb = border_color
+                    header.text = item["category"]
+                    header.text_frame.margin_left = Inches(0.2)
+                    header.text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
+                    p = header.text_frame.paragraphs[0]
                     p.font.bold = True
-                    p.font.size = Pt(22)
+                    p.font.size = Pt(26)
                     p.font.color.rgb = RGBColor(0, 0, 0)
                     p.alignment = PP_ALIGN.LEFT
-
-                    # Description under category
-                    desc = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, M, DESC_Y, FULL_W, DESC_H)
+                
+                    # Description directly under header (connected look)
+                    desc_y = TOP_Y + HEAD
+                    desc = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, M, desc_y, FULL_W, DESC_H)
                     desc.fill.solid()
                     desc.fill.fore_color.rgb = RGBColor(255, 255, 255)
                     desc.line.color.rgb = border_color
+                
                     tf = desc.text_frame
                     tf.clear()
                     tf.text = item.get("text", "")
                     tf.word_wrap = True
                     tf.margin_left = Inches(0.2)
-                    tf.margin_top = Inches(0.15)
+                    tf.margin_top = Inches(0.2)
                     tf.vertical_anchor = MSO_ANCHOR.TOP
                     p = tf.paragraphs[0]
                     p.font.size = Pt(18)
                     p.font.color.rgb = RGBColor(0, 0, 0)
                     p.alignment = PP_ALIGN.LEFT
+                
+                    # Image goes BELOW description and auto-fits above footer
+                    img_y = desc_y + DESC_H + GAP
+                    img_h = CONTENT_BOTTOM - img_y  # CONTENT_BOTTOM already protects the footer
+                
+                    # Safety clamp so it never goes negative
+                    if img_h < Inches(2.0):
+                        # If someone writes a huge description, reduce desc height to protect the image
+                        DESC_H = Inches(1.0)
+                        # Move desc shape height down
+                        desc.height = DESC_H
+                        img_y = desc_y + DESC_H + GAP
+                        img_h = CONTENT_BOTTOM - img_y
+                
+                    try:
+                        item["image"].seek(0)
+                    except Exception:
+                        pass
+                
+                    slide.shapes.add_picture(item["image"], M, img_y, width=FULL_W, height=img_h)
+                    add_border(slide, M, img_y, FULL_W, img_h, rgb=border_color, width_pt=1)
+
 
                 # Footer (same placement for BOTH layouts)
                 footer_box = slide.shapes.add_textbox(M, FOOTER_Y, Inches(6), FOOTER_H)

@@ -7,48 +7,8 @@ from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 import io
 from datetime import datetime
 
-# --- CONFIG & STYLING ---
+# Set page to wide mode
 st.set_page_config(page_title="Report Generator", layout="wide")
-
-# Inject Custom CSS to fix text visibility issues in inputs and cards
-st.markdown("""
-<style>
-    /* Force input text color to be visible */
-    .stTextInput input, .stTextArea textarea {
-        color: #333333 !important;
-    }
-    /* Style for the 'Card' look */
-    .report-card {
-        background-color: #f8f9fa;
-        border: 1px solid #ddd;
-        border-radius: 8px;
-        padding: 15px;
-        margin-bottom: 10px;
-    }
-    .report-label {
-        font-size: 0.75rem;
-        font-weight: 700;
-        color: #555;
-        text-transform: uppercase;
-        letter-spacing: 0.05em;
-        margin-bottom: 4px;
-        display: block;
-    }
-    .report-value {
-        font-size: 1rem;
-        color: #000000 !important; /* Force Black Text */
-        font-family: sans-serif;
-        line-height: 1.5;
-    }
-    .highlight-warning {
-        background-color: #fff3cd;
-        color: #856404;
-        padding: 2px 6px;
-        border-radius: 4px;
-        font-weight: bold;
-    }
-</style>
-""", unsafe_allow_html=True)
 
 st.title("Field Inspection Report Generator")
 st.markdown("---")
@@ -57,266 +17,336 @@ st.markdown("---")
 if "report_items" not in st.session_state:
     st.session_state.report_items = []
 if "edit_index" not in st.session_state:
-    st.session_state.edit_index = None # Stores the index of the item currently being edited
+    st.session_state.edit_index = None
 if "generated_ppt_binary" not in st.session_state:
     st.session_state.generated_ppt_binary = None
-if "uploader_key_id" not in st.session_state:
-    st.session_state.uploader_key_id = 0
+if "generated_filename" not in st.session_state:
+    st.session_state.generated_filename = ""
+if "uploader_id" not in st.session_state:
+    st.session_state.uploader_id = 0
 
-# --- 2. FUNCTIONS ---
+# --- 2. CALLBACK FUNCTIONS ---
+def add_entry_callback():
+    uploader_key = f"uploader_{st.session_state.uploader_id}"
+    uploaded_file = st.session_state.get(uploader_key)
+    description = st.session_state.get("entry_desc")
+    category = st.session_state.get("cat_selector")
+    custom_cat = st.session_state.get("custom_cat_input")
 
-def add_new_entry():
-    """Callback to add a single new item from the form."""
-    img = st.session_state.get(f"new_img_{st.session_state.uploader_key_id}")
-    desc = st.session_state.get("new_desc")
-    cat_select = st.session_state.get("new_cat_select")
-    cat_custom = st.session_state.get("new_cat_custom")
-
-    final_cat = cat_custom if cat_select == "Other..." else cat_select
-
-    if img and desc:
+    final_cat = category
+    if category == "Other..." and custom_cat:
+        final_cat = custom_cat
+    
+    if uploaded_file and description:
         st.session_state.report_items.append({
             "category": final_cat,
-            "text": desc,
-            "image": img
+            "text": description,
+            "image": uploaded_file
         })
-        # Reset Inputs
-        st.session_state["new_desc"] = ""
-        st.session_state["new_cat_custom"] = ""
-        st.session_state.uploader_key_id += 1 # Forces new uploader widget
-        st.session_state.generated_ppt_binary = None
-    else:
-        st.error("Please add both an Image and a Description.")
-
-def add_batch_images():
-    """Callback to process batch upload."""
-    files = st.session_state.get("batch_uploader")
-    if files:
-        for f in files:
-            st.session_state.report_items.append({
-                "category": "Exterior", # Default
-                "text": "", # Default empty
-                "image": f
-            })
-        st.session_state.generated_ppt_binary = None
-        # Note: We don't need to clear the batch uploader manually as it persists
-        # but the logic won't duplicate unless button is pressed again.
-
-def save_inline_edit(index):
-    """Callback to save changes made in the inline edit form."""
-    new_cat_select = st.session_state.get(f"edit_cat_select_{index}")
-    new_cat_custom = st.session_state.get(f"edit_cat_custom_{index}")
-    new_desc = st.session_state.get(f"edit_desc_{index}")
-    new_img = st.session_state.get(f"edit_img_{index}")
-    new_position = st.session_state.get(f"edit_pos_{index}")
-
-    final_cat = new_cat_custom if new_cat_select == "Other..." else new_cat_select
-    
-    current_item = st.session_state.report_items[index]
-    final_image = new_img if new_img is not None else current_item['image']
-
-    updated_item = {
-        "category": final_cat,
-        "text": new_desc,
-        "image": final_image
-    }
-
-    # Handle Reordering
-    if new_position is not None:
-        target_index = new_position - 1
-        # Ensure target is within bounds
-        target_index = max(0, min(target_index, len(st.session_state.report_items) - 1))
         
-        if target_index != index:
-            st.session_state.report_items.pop(index)
-            st.session_state.report_items.insert(target_index, updated_item)
-        else:
-            st.session_state.report_items[index] = updated_item
+        # Reset Inputs
+        st.session_state["entry_desc"] = ""
+        st.session_state.uploader_id += 1
+        st.session_state.generated_ppt_binary = None
     else:
-        st.session_state.report_items[index] = updated_item
+        st.error("Please provide both an image and a description.")
 
+def save_edit_callback():
+    idx = st.session_state.edit_index
+    uploader_key = f"uploader_{st.session_state.uploader_id}"
+    uploaded_file = st.session_state.get(uploader_key)
+    description = st.session_state.get("entry_desc")
+    category = st.session_state.get("cat_selector")
+    custom_cat = st.session_state.get("custom_cat_input")
+
+    final_cat = category
+    if category == "Other..." and custom_cat:
+        final_cat = custom_cat
+
+    current_item = st.session_state.report_items[idx]
+    final_img = uploaded_file if uploaded_file else current_item["image"]
+
+    st.session_state.report_items[idx] = {
+        "category": final_cat,
+        "text": description,
+        "image": final_img
+    }
+    
     st.session_state.edit_index = None
+    st.session_state["entry_desc"] = ""
+    st.session_state.uploader_id += 1
     st.session_state.generated_ppt_binary = None
 
-def delete_item(index):
+def cancel_edit_callback():
+    st.session_state.edit_index = None
+    st.session_state["entry_desc"] = ""
+    st.session_state.uploader_id += 1
+
+def delete_item_callback(index):
     st.session_state.report_items.pop(index)
     if st.session_state.edit_index == index:
         st.session_state.edit_index = None
     st.session_state.generated_ppt_binary = None
 
-def enter_edit_mode(index):
+def edit_item_callback(index):
     st.session_state.edit_index = index
+    st.session_state["entry_desc"] = st.session_state.report_items[index]["text"]
+    st.session_state.uploader_id += 1
+    st.session_state.generated_ppt_binary = None
+
 
 # --- 3. SETTINGS SIDEBAR ---
 with st.sidebar:
     st.header("Report Settings")
     report_title = st.text_input("Report Title", "Field Inspection Report")
-    report_subtitle = st.text_input("Subtitle / Date", datetime.now().strftime("%B %Y"))
-    final_filename = f"{report_title.replace(' ', '_')}.pptx"
+    date_option = st.selectbox("Date Format", ["Month & Year", "Date Only (MM-DD-YYYY)", "Date & Time", "Custom Text"])
+
+    report_subtitle = ""
+    filename_suffix = ""
+
+    if date_option == "Custom Text":
+        report_subtitle = st.text_input("Subtitle Text", "January 2026")
+        filename_suffix = report_subtitle.replace(" ", "_").replace("/", "-")
+    else:
+        selected_date = st.date_input("Select Date", datetime.now())
+        if date_option == "Month & Year":
+            report_subtitle = selected_date.strftime("%B %Y")
+            filename_suffix = selected_date.strftime("%b_%Y")
+        elif date_option == "Date Only (MM-DD-YYYY)":
+            report_subtitle = selected_date.strftime("%m-%d-%Y")
+            filename_suffix = selected_date.strftime("%m-%d-%Y")
+        elif date_option == "Date & Time":
+            selected_time = st.time_input("Select Time", datetime.now())
+            final_dt = datetime.combine(selected_date, selected_time)
+            report_subtitle = final_dt.strftime("%m-%d-%Y %H:%M")
+            filename_suffix = final_dt.strftime("%m-%d-%Y_%H%M")
+
+    st.divider()
+    st.caption("**Preview:**")
+    st.info(f"{report_subtitle}")
+    clean_title = report_title.replace(" ", "_")
+    final_filename = f"{clean_title}_{filename_suffix}.pptx"
+    st.caption(f"**Filename:** {final_filename}")
 
 
-# --- 4. BATCH UPLOAD (Restored) ---
-with st.expander("📂 Batch Upload (Add Multiple Images)", expanded=False):
-    st.write("Select multiple images to add them all at once. They will be added with default 'Exterior' category.")
-    st.file_uploader("Select Images", type=['png', 'jpg', 'jpeg'], accept_multiple_files=True, key="batch_uploader")
-    st.button("Add Batch Images", on_click=add_batch_images)
+# --- 4. BATCH UPLOAD ---
+with st.expander("Batch Upload (Add Multiple Images)", expanded=False):
+    st.write("Select all images in your folder and drag them here.")
+    batch_files = st.file_uploader("Select Multiple Images", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
+    
+    if st.button("Add All Batch Images", type="primary"):
+        if batch_files:
+            for file in batch_files:
+                st.session_state.report_items.append({
+                    "category": "Exterior",
+                    "text": "",
+                    "image": file
+                })
+            st.session_state.generated_ppt_binary = None
+            st.success(f"Added {len(batch_files)} images! Scroll down to edit.")
+        else:
+            st.warning("No files selected.")
 
 
-# --- 5. SINGLE ADD FORM ---
-st.subheader("Add Single Slide")
+# --- 5. SINGLE INPUT / EDIT FORM ---
+is_editing = st.session_state.edit_index is not None
+edit_item = st.session_state.report_items[st.session_state.edit_index] if is_editing else None
+
 with st.container():
-    c1, c2, c3 = st.columns([1, 2, 2])
-    
-    with c1:
-        cat_options = ["Exterior", "Interior", "Roof", "Plumbing", "Electrical", "Other..."]
-        st.selectbox("Category", cat_options, key="new_cat_select")
-        if st.session_state.get("new_cat_select") == "Other...":
-            st.text_input("Custom Category", key="new_cat_custom")
-    
-    with c2:
-        st.text_area("Description", height=100, key="new_desc", placeholder="Type observation here...")
-    
-    with c3:
-        st.file_uploader("Image", type=['jpg','png','jpeg'], key=f"new_img_{st.session_state.uploader_key_id}")
-        st.write("")
-        st.button("➕ Add Slide", type="primary", on_click=add_new_entry, use_container_width=True)
+    st.markdown("### " + (f"Editing Page {st.session_state.edit_index + 1}" if is_editing else "Add Single Entry"))
+    c1, c2 = st.columns([1, 1])
 
-# --- 6. MAIN LIST (Inline Editing & Display) ---
+    with c1:
+        standard_options = ["Exterior", "Interior"]
+        default_ix = 0
+        custom_val = ""
+
+        if is_editing:
+            if edit_item["category"] in standard_options:
+                default_ix = standard_options.index(edit_item["category"])
+            else:
+                default_ix = 2
+                custom_val = edit_item["category"]
+
+        st.selectbox("Category", standard_options + ["Other..."], index=default_ix, key="cat_selector")
+        
+        if st.session_state.get("cat_selector") == "Other...":
+            st.text_input("Enter Custom Category", value=custom_val, key="custom_cat_input")
+
+        st.text_area("Description", height=150, placeholder="Enter observation here...", key="entry_desc")
+
+    with c2:
+        if is_editing:
+            st.image(edit_item["image"], width=150, caption="Current Image")
+            st.caption("Leave upload blank to keep current image.")
+        
+        dynamic_key = f"uploader_{st.session_state.uploader_id}"
+        st.file_uploader("Upload Image (Single)", type=["png", "jpg", "jpeg"], key=dynamic_key)
+
+    st.write("")
+    b1, b2 = st.columns([1, 6])
+
+    if is_editing:
+        b1.button("Save Changes", type="primary", on_click=save_edit_callback)
+        b2.button("Cancel Edit", on_click=cancel_edit_callback)
+    else:
+        st.button("Add Entry", type="primary", on_click=add_entry_callback)
+
+
+# --- 6. PREVIEW LIST (REVERSED & STYLED) ---
 if st.session_state.report_items:
     st.markdown("---")
-    st.subheader(f"Slides ({len(st.session_state.report_items)})")
+    st.subheader(f"Current Entries ({len(st.session_state.report_items)})")
+    st.caption("Newest entries are shown at the top.")
     
-    for i, item in enumerate(st.session_state.report_items):
-        
-        # === EDIT MODE ===
-        if st.session_state.edit_index == i:
-            with st.container():
-                st.info(f"Editing Slide {i+1}")
-                ec1, ec2 = st.columns([1, 1])
+    # --- CHANGE: Reversed loop so newest is always first ---
+    # We use enumerate, but we convert to list and reverse to keep the correct 'Page X' number
+    items_with_index = list(enumerate(st.session_state.report_items))
+    
+    for i, item in reversed(items_with_index):
+        with st.container():
+            col_img, col_det, col_act = st.columns([2, 5, 1])
+            
+            with col_img:
+                st.image(item["image"], use_container_width=True)
+            
+            with col_det:
+                st.markdown(f"### Page {i+1}")
+                st.markdown(f"**Category:** {item['category']}")
                 
-                with ec1:
-                    # Page Reordering
-                    st.number_input("Page Order", min_value=1, max_value=len(st.session_state.report_items), value=i+1, key=f"edit_pos_{i}")
-                    
-                    # Category Logic
-                    edit_cat_opts = ["Exterior", "Interior", "Roof", "Plumbing", "Electrical", "Other..."]
-                    curr_cat = item['category']
-                    try:
-                        sel_index = edit_cat_opts.index(curr_cat)
-                    except ValueError:
-                        sel_index = 5 # 'Other...'
-                    
-                    st.selectbox("Category", edit_cat_opts, index=sel_index, key=f"edit_cat_select_{i}")
-                    
-                    # Show custom input if needed
-                    if st.session_state.get(f"edit_cat_select_{i}") == "Other...":
-                         # Pre-fill with current category if it's not in the standard list
-                        val = curr_cat if curr_cat not in edit_cat_opts else ""
-                        st.text_input("Custom Category", value=val, key=f"edit_cat_custom_{i}")
-
-                    st.text_area("Description", value=item['text'], height=150, key=f"edit_desc_{i}")
-
-                with ec2:
-                    st.image(item['image'], width=200, caption="Current Image")
-                    st.file_uploader("Replace Image (Optional)", type=['jpg','png'], key=f"edit_img_{i}")
-
-                btn_c1, btn_c2 = st.columns([1, 4])
-                with btn_c1:
-                    st.button("💾 Save", key=f"save_{i}", type="primary", on_click=save_inline_edit, args=(i,))
-                with btn_c2:
-                    st.button("Cancel", key=f"cancel_{i}", on_click=lambda: st.session_state.update(edit_index=None))
-                st.markdown("---")
-
-        # === VIEW MODE ===
-        else:
-            with st.container():
-                col_img, col_info, col_act = st.columns([2, 4, 1])
-                
-                with col_img:
-                    st.image(item['image'], use_container_width=True)
-                
-                with col_info:
-                    st.markdown(f"### Slide {i+1}")
-                    
-                    # Category Card
-                    st.markdown(f"""
-                        <div class="report-card">
-                            <span class="report-label">Category</span>
-                            <div class="report-value">{item['category']}</div>
+                # --- CHANGE: Styled Description Block ---
+                if item['text'] == "":
+                    # Yellow warning pill
+                    st.markdown(
+                        """
+                        <div style="margin-top: 10px;">
+                            <span style="font-size: 0.8em; font-weight: bold; color: #555; text-transform: uppercase; letter-spacing: 1px;">Description</span>
+                            <br>
+                            <span style="background-color: #ffd700; color: black; padding: 2px 6px; border-radius: 4px; font-weight: bold; font-size: 0.9em;">NO DESCRIPTION YET</span>
                         </div>
-                    """, unsafe_allow_html=True)
-                    
-                    # Description Card
-                    desc_html = item['text'] if item['text'] else '<span class="highlight-warning">NO DESCRIPTION</span>'
-                    st.markdown(f"""
-                        <div class="report-card">
-                            <span class="report-label">Description</span>
-                            <div class="report-value">{desc_html}</div>
+                        """, 
+                        unsafe_allow_html=True
+                    )
+                else:
+                    # Clean gray box for the description text
+                    st.markdown(
+                        f"""
+                        <div style="margin-top: 10px;">
+                            <span style="font-size: 0.8em; font-weight: bold; color: #555; text-transform: uppercase; letter-spacing: 1px;">Description</span>
+                            <div style="background-color: #f0f2f6; padding: 10px; border-radius: 5px; margin-top: 5px; border-left: 3px solid #ccc;">
+                                {item['text']}
+                            </div>
                         </div>
-                    """, unsafe_allow_html=True)
+                        """, 
+                        unsafe_allow_html=True
+                    )
+            
+            with col_act:
+                # Spacer to push buttons down slightly
+                st.write("") 
+                st.write("")
+                st.button("Edit", key=f"ed_{i}", on_click=edit_item_callback, args=(i,))
+                st.button("Delete", key=f"del_{i}", on_click=delete_item_callback, args=(i,))
+            
+            st.divider()
 
-                with col_act:
-                    st.button("✏️ Edit", key=f"btn_edit_{i}", on_click=enter_edit_mode, args=(i,), use_container_width=True)
-                    st.button("🗑️ Delete", key=f"btn_del_{i}", on_click=delete_item, args=(i,), use_container_width=True)
-                
-                st.divider()
 
-# --- 7. GENERATE PPT ---
+# --- 7. PPT GENERATION LOGIC ---
 if st.session_state.report_items:
-    st.write("")
-    if st.button("Generate PowerPoint Report", type="primary", use_container_width=True):
-        
-        prs = Presentation()
-        
-        # Title Slide
-        slide = prs.slides.add_slide(prs.slide_layouts[0])
-        slide.shapes.title.text = report_title
-        slide.placeholders[1].text = report_subtitle
-        
-        # Layout Config
-        MARGIN = Inches(0.5)
-        TOP = Inches(1.0)
-        WIDTH = Inches(4.25)
-        HEIGHT = Inches(5.0)
-        
-        for idx, item in enumerate(st.session_state.report_items):
-            slide = prs.slides.add_slide(prs.slide_layouts[6]) # Blank
-            
-            # Header
-            header = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(0), Inches(0), Inches(10), Inches(0.8))
-            header.fill.solid()
-            header.fill.fore_color.rgb = RGBColor(50, 50, 50)
-            header.text = f"{item['category']} - Slide {idx+1}"
-            header.text_frame.paragraphs[0].font.color.rgb = RGBColor(255, 255, 255)
-            header.text_frame.paragraphs[0].font.size = Pt(24)
-            
-            # Text Box
-            tb = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, MARGIN, TOP, WIDTH, HEIGHT)
-            tb.fill.background()
-            tb.line.color.rgb = RGBColor(0,0,0)
-            tf = tb.text_frame
-            tf.text = item['text']
-            tf.paragraphs[0].font.size = Pt(18)
-            tf.paragraphs[0].font.color.rgb = RGBColor(0,0,0)
-            tf.word_wrap = True
-            
-            # Image
-            try: item['image'].seek(0)
-            except: pass
-            
-            pic = slide.shapes.add_picture(item['image'], Inches(5.0), TOP, width=WIDTH, height=HEIGHT)
-            pic.line.color.rgb = RGBColor(0,0,0)
-            pic.line.width = Pt(1)
+    if st.session_state.generated_ppt_binary is None:
+        if st.button("Generate Report", type="primary", use_container_width=True):
+            prs = Presentation()
 
-        # Save
-        binary_output = io.BytesIO()
-        prs.save(binary_output)
-        binary_output.seek(0)
-        
+            slide = prs.slides.add_slide(prs.slide_layouts[0])
+            slide.shapes.title.text = report_title
+            slide.placeholders[1].text = report_subtitle
+
+            SLIDE_WIDTH = Inches(10)
+            SLIDE_HEIGHT = Inches(7.5)
+            MARGIN_X = Inches(0.5)
+            TOP_Y = Inches(0.8)
+            GAP = Inches(0.2)
+            COL_WIDTH = Inches(4.4)
+            HEADER_HEIGHT = Inches(0.8)
+            BODY_HEIGHT = Inches(5.4)
+            IMG_BLOCK_HEIGHT = HEADER_HEIGHT + BODY_HEIGHT
+
+            for index, item in enumerate(st.session_state.report_items):
+                slide = prs.slides.add_slide(prs.slide_layouts[6])
+
+                background = slide.background
+                background.fill.solid()
+                background.fill.fore_color.rgb = RGBColor(200, 210, 215)
+
+                header = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, MARGIN_X, TOP_Y, COL_WIDTH, HEADER_HEIGHT)
+                header.fill.solid()
+                header.fill.fore_color.rgb = RGBColor(176, 196, 222)
+                header.line.color.rgb = RGBColor(0, 0, 0)
+                header.text = item["category"]
+                p = header.text_frame.paragraphs[0]
+                p.font.bold = True
+                p.font.size = Pt(26)
+                p.font.color.rgb = RGBColor(0, 0, 0)
+                p.alignment = PP_ALIGN.LEFT
+                header.text_frame.margin_left = Inches(0.2)
+                header.text_frame.vertical_anchor = MSO_ANCHOR.MIDDLE
+
+                desc_box = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, MARGIN_X, TOP_Y + HEADER_HEIGHT, COL_WIDTH, BODY_HEIGHT)
+                desc_box.fill.solid()
+                desc_box.fill.fore_color.rgb = RGBColor(255, 255, 255)
+                desc_box.line.color.rgb = RGBColor(0, 0, 0)
+                tf = desc_box.text_frame
+                tf.text = item["text"]
+                tf.vertical_anchor = MSO_ANCHOR.TOP
+                tf.margin_top = Inches(0.2)
+                tf.margin_left = Inches(0.2)
+                p = tf.paragraphs[0]
+                p.font.bold = False
+                p.font.size = Pt(20)
+                p.font.color.rgb = RGBColor(0, 0, 0)
+                p.alignment = PP_ALIGN.LEFT
+                tf.word_wrap = True
+
+                img_x = MARGIN_X + COL_WIDTH + GAP
+                try:
+                    item["image"].seek(0)
+                except:
+                    pass
+                pic = slide.shapes.add_picture(item["image"], img_x, TOP_Y, width=COL_WIDTH, height=IMG_BLOCK_HEIGHT)
+                pic.line.color.rgb = RGBColor(0, 0, 0)
+                pic.line.width = Pt(1)
+
+                footer_y = SLIDE_HEIGHT - Inches(0.5)
+                footer_box = slide.shapes.add_textbox(MARGIN_X, footer_y, Inches(4), Inches(0.5))
+                fp = footer_box.text_frame.paragraphs[0]
+                fp.text = report_title
+                fp.font.size = Pt(10)
+                fp.font.color.rgb = RGBColor(80, 80, 80)
+                
+                page_box = slide.shapes.add_textbox(SLIDE_WIDTH - MARGIN_X - Inches(2), footer_y, Inches(2), Inches(0.5))
+                pp = page_box.text_frame.paragraphs[0]
+                pp.text = f"Page {index + 1}"
+                pp.font.size = Pt(10)
+                pp.font.color.rgb = RGBColor(80, 80, 80)
+                pp.alignment = PP_ALIGN.RIGHT
+
+            binary_output = io.BytesIO()
+            prs.save(binary_output)
+            binary_output.seek(0)
+
+            st.session_state.generated_ppt_binary = binary_output
+            st.session_state.generated_filename = final_filename
+            st.rerun()
+    else:
         st.download_button(
-            label="⬇️ Download .pptx",
-            data=binary_output,
-            file_name=final_filename,
+            label=f"Download {st.session_state.generated_filename}",
+            data=st.session_state.generated_ppt_binary,
+            file_name=st.session_state.generated_filename,
             mime="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-            type="secondary"
+            type="primary",
+            use_container_width=True,
         )
+        if st.button("Reset / Start New Report", use_container_width=True):
+            st.session_state.report_items = []
+            st.session_state.generated_ppt_binary = None
+            st.rerun()

@@ -7,7 +7,9 @@ from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 import io
 from datetime import datetime
 from uuid import uuid4
-from PIL import Image
+from PIL import Image, ImageFile
+from PIL.Image import DecompressionBombError
+
 
 # --------------------------------------------------
 # Page setup
@@ -43,18 +45,26 @@ def log(msg: str):
     st.session_state.debug_log.append(f"[{ts}] {msg}")
 
 def get_image_wh(uploaded_file):
-    """Return (w, h) and reset pointer so ppt add_picture still works."""
     try:
-        uploaded_file.seek(0)
-    except Exception:
-        pass
-    img = Image.open(uploaded_file)
-    w, h = img.size
-    try:
-        uploaded_file.seek(0)
-    except Exception:
-        pass
-    return w, h
+        try:
+            uploaded_file.seek(0)
+        except Exception:
+            pass
+
+        img = Image.open(uploaded_file)
+        w, h = img.size
+
+        try:
+            uploaded_file.seek(0)
+        except Exception:
+            pass
+
+        return w, h
+
+    except DecompressionBombError:
+        # fallback: treat as landscape-ish so it uses the full-width layout
+        log("WARNING: DecompressionBombError while reading image size. Defaulting ratio to landscape.")
+        return 2000, 1000  # fake size (ratio 2.0)
 
 def add_border(slide, x, y, w, h, rgb=RGBColor(0, 0, 0), width_pt=1):
     """Reliable border for pictures: draw transparent rectangle over image."""
@@ -63,6 +73,38 @@ def add_border(slide, x, y, w, h, rgb=RGBColor(0, 0, 0), width_pt=1):
     border.line.color.rgb = rgb
     border.line.width = Pt(width_pt)
     return border
+
+def safe_preview_image(uploaded_file):
+    """
+    Safely display an uploaded image in Streamlit.
+    If Pillow thinks it's too large (DecompressionBombError), show a warning instead of crashing.
+    """
+    try:
+        # st.image can take uploaded_file directly, but that triggers PIL internally.
+        # We'll validate with PIL first.
+        try:
+            uploaded_file.seek(0)
+        except Exception:
+            pass
+
+        with Image.open(uploaded_file) as im:
+            im.verify()  # lightweight check; doesn't fully decode
+
+        try:
+            uploaded_file.seek(0)
+        except Exception:
+            pass
+
+        st.image(uploaded_file, use_container_width=True)
+
+    except DecompressionBombError:
+        st.warning(
+            "This image is extremely large (pixel-wise) and Pillow blocked preview for safety. "
+            "You can still generate the PowerPoint, or resize the image before uploading."
+        )
+    except Exception as e:
+        st.warning(f"Couldn't preview this image: {e}")
+
 
 # --------------------------------------------------
 # Callbacks
@@ -289,7 +331,7 @@ if st.session_state.report_items:
         col_img, col_fields, col_actions = st.columns([2, 6, 2])
 
         with col_img:
-            st.image(item["image"], use_container_width=True)
+            safe_preview_image(item["image"])
             st.file_uploader(
                 "Replace image",
                 type=["png", "jpg", "jpeg"],

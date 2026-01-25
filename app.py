@@ -22,35 +22,41 @@ if "generated_ppt_binary" not in st.session_state:
     st.session_state.generated_ppt_binary = None
 if "generated_filename" not in st.session_state:
     st.session_state.generated_filename = ""
+# Key ID to force-reset the uploader
+if "uploader_id" not in st.session_state:
+    st.session_state.uploader_id = 0
 
-# --- 2. CALLBACK FUNCTIONS (Fixes the Error) ---
+# --- 2. CALLBACK FUNCTIONS ---
 def add_entry_callback():
-    """Adds the item and clears inputs BEFORE the page reruns."""
-    # Get values from session state directly
-    uploaded_file = st.session_state.get("single_uploader")
+    """Adds the item and resets inputs by incrementing the uploader ID."""
+    # 1. Capture values using the specific widget keys
+    # Note: We construct the key dynamically for the uploader
+    uploader_key = f"uploader_{st.session_state.uploader_id}"
+    uploaded_file = st.session_state.get(uploader_key)
+    
     description = st.session_state.get("entry_desc")
     category = st.session_state.get("cat_selector")
     custom_cat = st.session_state.get("custom_cat_input")
 
-    # Determine final category
+    # 2. Logic to add item
     final_cat = category
     if category == "Other..." and custom_cat:
         final_cat = custom_cat
     
     if uploaded_file and description:
-        # Add to list
         st.session_state.report_items.append({
             "category": final_cat,
             "text": description,
             "image": uploaded_file
         })
         
-        # Clear the inputs safely
+        # 3. RESET INPUTS
+        # Clear text area
         st.session_state["entry_desc"] = ""
-        st.session_state["single_uploader"] = None
-        # We don't need st.rerun() here, callbacks automatically trigger a rerun
+        # Force a fresh uploader by changing its ID
+        st.session_state.uploader_id += 1
         
-        # Reset generation since data changed
+        # Clear generated file since data changed
         st.session_state.generated_ppt_binary = None
     else:
         st.error("Please provide both an image and a description.")
@@ -58,7 +64,10 @@ def add_entry_callback():
 def save_edit_callback():
     """Saves changes and exits edit mode."""
     idx = st.session_state.edit_index
-    uploaded_file = st.session_state.get("single_uploader")
+    
+    # Get values
+    uploader_key = f"uploader_{st.session_state.uploader_id}"
+    uploaded_file = st.session_state.get(uploader_key)
     description = st.session_state.get("entry_desc")
     category = st.session_state.get("cat_selector")
     custom_cat = st.session_state.get("custom_cat_input")
@@ -77,16 +86,16 @@ def save_edit_callback():
         "image": final_img
     }
     
-    # Exit edit mode and clear inputs
+    # Exit edit mode & Reset uploader
     st.session_state.edit_index = None
     st.session_state["entry_desc"] = ""
-    st.session_state["single_uploader"] = None
+    st.session_state.uploader_id += 1
     st.session_state.generated_ppt_binary = None
 
 def cancel_edit_callback():
     st.session_state.edit_index = None
     st.session_state["entry_desc"] = ""
-    st.session_state["single_uploader"] = None
+    st.session_state.uploader_id += 1
 
 def delete_item_callback(index):
     st.session_state.report_items.pop(index)
@@ -98,6 +107,8 @@ def edit_item_callback(index):
     st.session_state.edit_index = index
     # Pre-fill the description box
     st.session_state["entry_desc"] = st.session_state.report_items[index]["text"]
+    # Ensure uploader is fresh
+    st.session_state.uploader_id += 1
     st.session_state.generated_ppt_binary = None
 
 
@@ -176,11 +187,9 @@ with st.container():
 
         st.selectbox("Category", standard_options + ["Other..."], index=default_ix, key="cat_selector")
         
-        # Only show custom input if 'Other...' is selected
         if st.session_state.get("cat_selector") == "Other...":
             st.text_input("Enter Custom Category", value=custom_val, key="custom_cat_input")
 
-        # Description Input
         st.text_area("Description", height=150, placeholder="Enter observation here...", key="entry_desc")
 
     with c2:
@@ -188,7 +197,10 @@ with st.container():
             st.image(edit_item["image"], width=150, caption="Current Image")
             st.caption("Leave upload blank to keep current image.")
         
-        st.file_uploader("Upload Image (Single)", type=["png", "jpg", "jpeg"], key="single_uploader")
+        # --- FIX: Dynamic Key for Uploader ---
+        # This prevents the "ValueAssignmentNotAllowedError" by creating a fresh widget every reset
+        dynamic_key = f"uploader_{st.session_state.uploader_id}"
+        st.file_uploader("Upload Image (Single)", type=["png", "jpg", "jpeg"], key=dynamic_key)
 
     st.write("")
     b1, b2 = st.columns([1, 6])
@@ -197,11 +209,10 @@ with st.container():
         b1.button("Save Changes", type="primary", on_click=save_edit_callback)
         b2.button("Cancel Edit", on_click=cancel_edit_callback)
     else:
-        # NOTICE: using on_click handles the clearing safely
         st.button("Add Entry", type="primary", on_click=add_entry_callback)
 
 
-# --- 6. PREVIEW LIST (Fixed Layout) ---
+# --- 6. PREVIEW LIST ---
 if st.session_state.report_items:
     st.markdown("---")
     st.subheader(f"Current Entries ({len(st.session_state.report_items)})")
@@ -217,11 +228,11 @@ if st.session_state.report_items:
                 st.markdown(f"### Page {i+1}")
                 st.markdown(f"**Category:** {item['category']}")
                 
-                # --- FIX: Single Line Description ---
+                # --- FIX: Yellow Highlight for Missing Description ---
                 if item['text'] == "":
-                    st.markdown("**Description:** *No description yet*")
+                    # Using HTML span with background color for "Highlighter" effect
+                    st.markdown('**Description:** <span style="background-color: #ffd700; color: black; padding: 2px 6px; border-radius: 4px; font-weight: bold;">No description yet</span>', unsafe_allow_html=True)
                 else:
-                    # Using write lets it wrap naturally, or markdown for bold prefix
                     st.markdown(f"**Description:** {item['text']}")
             
             with col_act:

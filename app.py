@@ -7,8 +7,16 @@ from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
 import io
 from datetime import datetime
 from uuid import uuid4
-from PIL import Image, ImageFile
+from collections import Counter
+
+from PIL import Image
 from PIL.Image import DecompressionBombError
+
+from reportlab.pdfgen import canvas
+from reportlab.lib.units import inch
+from reportlab.lib.utils import ImageReader
+from reportlab.platypus import Paragraph
+from reportlab.lib.styles import getSampleStyleSheet
 
 
 # --------------------------------------------------
@@ -27,6 +35,10 @@ if "generated_ppt_binary" not in st.session_state:
     st.session_state.generated_ppt_binary = None
 if "generated_filename" not in st.session_state:
     st.session_state.generated_filename = ""
+if "generated_pdf_binary" not in st.session_state:
+    st.session_state.generated_pdf_binary = None
+if "generated_pdf_filename" not in st.session_state:
+    st.session_state.generated_pdf_filename = ""
 if "uploader_id" not in st.session_state:
     st.session_state.uploader_id = 0
 if "debug_log" not in st.session_state:
@@ -37,6 +49,7 @@ for item in st.session_state.report_items:
     if "id" not in item:
         item["id"] = uuid4().hex
 
+
 # --------------------------------------------------
 # Helpers
 # --------------------------------------------------
@@ -44,7 +57,12 @@ def log(msg: str):
     ts = datetime.now().strftime("%H:%M:%S")
     st.session_state.debug_log.append(f"[{ts}] {msg}")
 
+
 def get_image_wh(uploaded_file):
+    """
+    Return (w, h) and reset pointer so ppt add_picture still works.
+    If PIL blocks the image due to huge pixel count, we fallback to a fake landscape size.
+    """
     try:
         try:
             uploaded_file.seek(0)
@@ -62,17 +80,20 @@ def get_image_wh(uploaded_file):
         return w, h
 
     except DecompressionBombError:
-        # fallback: treat as landscape-ish so it uses the full-width layout
         log("WARNING: DecompressionBombError while reading image size. Defaulting ratio to landscape.")
-        return 2000, 1000  # fake size (ratio 2.0)
+        return 2000, 1000  # fake size -> ratio 2.0
+
 
 def add_border(slide, x, y, w, h, rgb=RGBColor(0, 0, 0), width_pt=1):
-    """Reliable border for pictures: draw transparent rectangle over image."""
+    """
+    Reliable border for pictures: draw transparent rectangle over image.
+    """
     border = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, x, y, w, h)
     border.fill.background()  # transparent fill
     border.line.color.rgb = rgb
     border.line.width = Pt(width_pt)
     return border
+
 
 def safe_preview_image(uploaded_file):
     """
@@ -80,15 +101,13 @@ def safe_preview_image(uploaded_file):
     If Pillow thinks it's too large (DecompressionBombError), show a warning instead of crashing.
     """
     try:
-        # st.image can take uploaded_file directly, but that triggers PIL internally.
-        # We'll validate with PIL first.
         try:
             uploaded_file.seek(0)
         except Exception:
             pass
 
         with Image.open(uploaded_file) as im:
-            im.verify()  # lightweight check; doesn't fully decode
+            im.verify()
 
         try:
             uploaded_file.seek(0)
@@ -100,10 +119,163 @@ def safe_preview_image(uploaded_file):
     except DecompressionBombError:
         st.warning(
             "This image is extremely large (pixel-wise) and Pillow blocked preview for safety. "
-            "You can still generate the PowerPoint, or resize the image before uploading."
+            "You can still generate the report, or resize the image before uploading."
         )
     except Exception as e:
         st.warning(f"Couldn't preview this image: {e}")
+
+
+def build_pdf(report_title, report_subtitle, report_address, supervisors, items, cat_counts):
+    """
+    Build a PDF that mirrors your PPT structure:
+    - Cover page with title/subtitle/address/supervisors/category counts
+    - One page per entry with the SAME portrait/landscape layout rules
+    """
+    buf = io.BytesIO()
+
+    # Use the same slide aspect: 10in x 7.5in
+    PAGE_W = 10 * inch
+    PAGE_H = 7.5 * inch
+    c = canvas.Canvas(buf, pagesize=(PAGE_W, PAGE_H))
+
+    styles = getSampleStyleSheet()
+    styleN = styles["Normal"]
+    styleN.fontSize = 11
+    styleN.leading = 14
+
+    # -------- Cover page --------
+    c.setFont("Helvetica-Bold", 28)
+    c.drawString(0.7 * inch, 6.6 * inch, report_title)
+
+    c.setFont("Helvetica", 18)
+    c.drawString(0.7 * inch, 6.2 * inch, report_subtitle)
+
+    counts_str = ", ".join([f"{v} {k}" for k, v in cat_counts.items()]) or "0 items"
+
+    c.setFont("Helvetica", 14)
+    c.drawString(0.7 * inch, 5.6 * inch, f"Address: {report_address}")
+    c.drawString(0.7 * inch, 5.25 * inch, f"Supervisor(s): {supervisors}")
+
+    c.setFont("Helvetica-Bold", 14)
+    c.drawString(0.7 * inch, 4.85 * inch, f"Findings: {counts_str}")
+
+    c.showPage()
+
+    # -------- Per-entry pages --------
+    M = 0.5 * inch
+    TOP_Y = 0.7 * inch
+    FOOTER_H = 0.50 * inch
+    FOOTER_Y = PAGE_H - FOOTER_H
+    CONTENT_BOTTOM = FOOTER_Y - 0.15 * inch
+
+    header_fill = (176/255, 196/255, 222/255)
+    bg_fill = (200/255, 210/255, 215/255)
+
+    for idx, item in enumerate(items, start=1):
+        # background
+        c.setFillColorRGB(*bg_fill)
+        c.rect(0, 0, PAGE_W, PAGE_H, fill=1, stroke=0)
+
+        # detect landscape
+        try:
+            w, h = get_image_wh(item["image"])
+            ratio = (w / h) if h else 1.0
+        except Exception:
+            ratio = 1.0
+
+        is_landscape = ratio >= 1.10
+
+        if not is_landscape:
+            # portrait layout: header + desc left, image right
+            GAP = 0.2 * inch
+            COL = 4.4 * inch
+            HEAD = 0.8 * inch
+            BODY = 5.4 * inch
+            IMG_H = HEAD + BODY
+
+            # header (left)
+            c.setFillColorRGB(*header_fill)
+            c.setStrokeColorRGB(0, 0, 0)
+            c.rect(M, PAGE_H - (TOP_Y + HEAD), COL, HEAD, fill=1, stroke=1)
+
+            c.setFillColorRGB(0, 0, 0)
+            c.setFont("Helvetica-Bold", 22)
+            c.drawString(M + 0.2*inch, PAGE_H - (TOP_Y + 0.55*inch), item["category"])
+
+            # desc (left)
+            c.setFillColorRGB(1, 1, 1)
+            c.rect(M, PAGE_H - (TOP_Y + HEAD + BODY), COL, BODY, fill=1, stroke=1)
+
+            desc_text = item.get("text", "") or ""
+            para = Paragraph(desc_text.replace("\n", "<br/>"), styleN)
+            w_, h_ = para.wrap(COL - 0.4*inch, BODY - 0.4*inch)
+            para.drawOn(c, M + 0.2*inch, PAGE_H - (TOP_Y + HEAD + 0.2*inch) - h_)
+
+            # image (right)
+            img_x = M + COL + GAP
+            img_y = PAGE_H - (TOP_Y + IMG_H)
+
+            try:
+                item["image"].seek(0)
+            except Exception:
+                pass
+            img = ImageReader(item["image"])
+            c.drawImage(img, img_x, img_y, width=COL, height=IMG_H, preserveAspectRatio=True, anchor='c')
+            c.rect(img_x, img_y, COL, IMG_H, fill=0, stroke=1)
+
+        else:
+            # landscape layout (requested): header+desc top, image below
+            FULL_W = PAGE_W - (M * 2)
+            GAP = 0.2 * inch
+            HEAD = 0.8 * inch
+            DESC_H = 1.45 * inch
+
+            # header full width (same Y as portrait header)
+            c.setFillColorRGB(*header_fill)
+            c.setStrokeColorRGB(0, 0, 0)
+            c.rect(M, PAGE_H - (TOP_Y + HEAD), FULL_W, HEAD, fill=1, stroke=1)
+
+            c.setFillColorRGB(0, 0, 0)
+            c.setFont("Helvetica-Bold", 22)
+            c.drawString(M + 0.2*inch, PAGE_H - (TOP_Y + 0.55*inch), item["category"])
+
+            # desc directly under header
+            desc_y_top = TOP_Y + HEAD
+            c.setFillColorRGB(1, 1, 1)
+            c.rect(M, PAGE_H - (desc_y_top + DESC_H), FULL_W, DESC_H, fill=1, stroke=1)
+
+            desc_text = item.get("text", "") or ""
+            para = Paragraph(desc_text.replace("\n", "<br/>"), styleN)
+            w_, h_ = para.wrap(FULL_W - 0.4*inch, DESC_H - 0.35*inch)
+            para.drawOn(c, M + 0.2*inch, PAGE_H - (desc_y_top + 0.2*inch) - h_)
+
+            # image below desc and above footer
+            img_y_top = desc_y_top + DESC_H + GAP
+            img_h = CONTENT_BOTTOM - img_y_top
+            if img_h < 2.0 * inch:
+                img_h = 2.0 * inch
+
+            img_y = PAGE_H - (img_y_top + img_h)
+
+            try:
+                item["image"].seek(0)
+            except Exception:
+                pass
+            img = ImageReader(item["image"])
+            c.drawImage(img, M, img_y, width=FULL_W, height=img_h, preserveAspectRatio=True, anchor='c')
+            c.rect(M, img_y, FULL_W, img_h, fill=0, stroke=1)
+
+        # footer (same spot)
+        c.setFillColorRGB(0.31, 0.31, 0.31)
+        c.setFont("Helvetica", 10)
+        c.drawString(M, 0.25*inch, report_title)
+        c.drawRightString(PAGE_W - M, 0.25*inch, f"Page {idx}")
+
+        c.showPage()
+
+    c.save()
+    buf.seek(0)
+    return buf
 
 
 # --------------------------------------------------
@@ -132,12 +304,16 @@ def add_entry_callback():
         st.session_state["entry_desc"] = ""
         st.session_state.uploader_id += 1
         st.session_state.generated_ppt_binary = None
+        st.session_state.generated_pdf_binary = None
     else:
         st.error("Please provide both an image and a description.")
+
 
 def delete_item_callback(index):
     st.session_state.report_items.pop(index)
     st.session_state.generated_ppt_binary = None
+    st.session_state.generated_pdf_binary = None
+
 
 def update_item_text(item_id):
     for it in st.session_state.report_items:
@@ -145,6 +321,8 @@ def update_item_text(item_id):
             it["text"] = (st.session_state.get(f"desc_{item_id}") or "").strip()
             break
     st.session_state.generated_ppt_binary = None
+    st.session_state.generated_pdf_binary = None
+
 
 def update_item_category(item_id):
     selected = st.session_state.get(f"cat_sel_{item_id}", "Exterior")
@@ -161,6 +339,8 @@ def update_item_category(item_id):
             it["category"] = final_cat
             break
     st.session_state.generated_ppt_binary = None
+    st.session_state.generated_pdf_binary = None
+
 
 def update_item_image(item_id):
     uploaded = st.session_state.get(f"img_{item_id}")
@@ -170,6 +350,8 @@ def update_item_image(item_id):
                 it["image"] = uploaded
                 break
         st.session_state.generated_ppt_binary = None
+        st.session_state.generated_pdf_binary = None
+
 
 def move_item(from_index, to_index):
     items = st.session_state.report_items
@@ -180,23 +362,29 @@ def move_item(from_index, to_index):
     item = items.pop(from_index)
     items.insert(to_index, item)
     st.session_state.generated_ppt_binary = None
+    st.session_state.generated_pdf_binary = None
+
 
 def move_up(i):
     if i > 0:
         move_item(i, i - 1)
 
+
 def move_down(i):
     if i < len(st.session_state.report_items) - 1:
         move_item(i, i + 1)
+
 
 def move_top(i):
     if i > 0:
         move_item(i, 0)
 
+
 def move_bottom(i):
     last = len(st.session_state.report_items) - 1
     if i < last:
         move_item(i, last)
+
 
 # --------------------------------------------------
 # Sidebar
@@ -204,6 +392,11 @@ def move_bottom(i):
 with st.sidebar:
     st.header("Report Settings")
     report_title = st.text_input("Report Title", "Field Inspection Report")
+
+    st.subheader("Cover Page Details")
+    report_address = st.text_input("Address / Location", "123 Main St, City, State")
+    supervisors = st.text_input("Supervisor(s)", "Supervisor A, Supervisor B")
+
     date_option = st.selectbox(
         "Date Format",
         ["Month & Year", "Date Only (MM-DD-YYYY)", "Date & Time", "Custom Text"]
@@ -235,14 +428,17 @@ with st.sidebar:
 
     clean_title = report_title.replace(" ", "_")
     final_filename = f"{clean_title}_{filename_suffix}.pptx"
-    st.caption(f"**Filename:** {final_filename}")
+    final_pdf_filename = f"{clean_title}_{filename_suffix}.pdf"
+    st.caption(f"**PPT Filename:** {final_filename}")
+    st.caption(f"**PDF Filename:** {final_pdf_filename}")
 
     st.divider()
     debug_mode = st.checkbox(
         "Debug mode",
         value=False,
-        help="Shows PPT build logs for troubleshooting (safe for normal users to ignore)."
+        help="Shows build logs for troubleshooting (safe for normal users to ignore)."
     )
+
 
 # --------------------------------------------------
 # Batch upload
@@ -265,9 +461,11 @@ with st.expander("Batch Upload (Add Multiple Images)", expanded=False):
                     "image": f
                 })
             st.session_state.generated_ppt_binary = None
+            st.session_state.generated_pdf_binary = None
             st.success(f"Added {len(batch_files)} images! Scroll down to edit.")
         else:
             st.warning("No files selected.")
+
 
 # --------------------------------------------------
 # Quick add
@@ -287,6 +485,7 @@ with c2:
     st.file_uploader("Upload Image (Single)", type=["png", "jpg", "jpeg"], key=dynamic_key)
 
 st.button("Add Entry", type="primary", on_click=add_entry_callback)
+
 
 # --------------------------------------------------
 # Current entries
@@ -386,6 +585,7 @@ if st.session_state.report_items:
 
         st.divider()
 
+
 # --------------------------------------------------
 # Debug log panel
 # --------------------------------------------------
@@ -400,15 +600,22 @@ if debug_mode:
             use_container_width=True
         )
 
+
 # --------------------------------------------------
-# Generate PPT
+# Generate PPT + PDF
 # --------------------------------------------------
 if st.session_state.report_items:
     if st.session_state.generated_ppt_binary is None:
         if st.button("Generate Report", type="primary", use_container_width=True):
             st.session_state.debug_log = []
-            log("Starting PPT generation...")
+            log("Starting report generation...")
 
+            # Category counts
+            cat_counts = Counter([it["category"] for it in st.session_state.report_items])
+            counts_str = ", ".join([f"{v} {k}" for k, v in cat_counts.items()]) or "0 items"
+            log(f"Category counts: {counts_str}")
+
+            # ---------------- PPT BUILD ----------------
             prs = Presentation()
 
             # Title slide
@@ -416,15 +623,31 @@ if st.session_state.report_items:
             slide.shapes.title.text = report_title
             slide.placeholders[1].text = report_subtitle
 
-            # Constants (footer position SAME for portrait & landscape)
+            info_box = slide.shapes.add_textbox(Inches(0.7), Inches(3.4), Inches(8.6), Inches(2.0))
+            tf = info_box.text_frame
+            tf.clear()
+
+            p = tf.paragraphs[0]
+            p.text = f"Address: {report_address}"
+            p.font.size = Pt(16)
+
+            p = tf.add_paragraph()
+            p.text = f"Supervisor(s): {supervisors}"
+            p.font.size = Pt(16)
+
+            p = tf.add_paragraph()
+            p.text = f"Findings: {counts_str}"
+            p.font.size = Pt(16)
+            p.font.bold = True
+
+            # Constants
             SLIDE_W = Inches(10)
             SLIDE_H = Inches(7.5)
             M = Inches(0.5)
 
-            # Keep footer at the same Y for both layouts
-            FOOTER_H = Inches(0.50)                 # same feel as your vertical layout
-            FOOTER_Y = SLIDE_H - FOOTER_H           # puts top of footer at 7.0"
-            CONTENT_BOTTOM = FOOTER_Y - Inches(0.15)  # content must stay above this
+            FOOTER_H = Inches(0.50)
+            FOOTER_Y = SLIDE_H - FOOTER_H
+            CONTENT_BOTTOM = FOOTER_Y - Inches(0.15)
 
             header_color = RGBColor(176, 196, 222)
             border_color = RGBColor(0, 0, 0)
@@ -432,24 +655,22 @@ if st.session_state.report_items:
             for index, item in enumerate(st.session_state.report_items):
                 slide = prs.slides.add_slide(prs.slide_layouts[6])
 
-                # Background
                 bg = slide.background
                 bg.fill.solid()
                 bg.fill.fore_color.rgb = RGBColor(200, 210, 215)
 
-                # Detect orientation via ratio
                 try:
                     w, h = get_image_wh(item["image"])
                     ratio = (w / h) if h else 1.0
                 except Exception as e:
-                    w, h, ratio = 0, 0, 1.0
+                    ratio = 1.0
                     log(f"Page {index+1}: ERROR reading image size -> {e}")
 
                 is_landscape = ratio >= 1.10
-                log(f"Page {index+1}: image {w}x{h}, ratio={ratio:.2f}, landscape={is_landscape}")
+                log(f"Page {index+1}: ratio={ratio:.2f}, landscape={is_landscape}")
 
                 if not is_landscape:
-                    # ===== Portrait layout: header + desc left, image right =====
+                    # Portrait: header+desc left, image right
                     TOP_Y = Inches(0.7)
                     GAP = Inches(0.2)
                     COL = Inches(4.4)
@@ -457,7 +678,6 @@ if st.session_state.report_items:
                     BODY = Inches(5.4)
                     IMG_H = HEAD + BODY
 
-                    # Header (left)
                     header = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, M, TOP_Y, COL, HEAD)
                     header.fill.solid()
                     header.fill.fore_color.rgb = header_color
@@ -471,7 +691,6 @@ if st.session_state.report_items:
                     p.font.color.rgb = RGBColor(0, 0, 0)
                     p.alignment = PP_ALIGN.LEFT
 
-                    # Description (left)
                     desc = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, M, TOP_Y + HEAD, COL, BODY)
                     desc.fill.solid()
                     desc.fill.fore_color.rgb = RGBColor(255, 255, 255)
@@ -488,7 +707,6 @@ if st.session_state.report_items:
                     p.font.color.rgb = RGBColor(0, 0, 0)
                     p.alignment = PP_ALIGN.LEFT
 
-                    # Image (right)
                     img_x = M + COL + GAP
                     try:
                         item["image"].seek(0)
@@ -498,18 +716,14 @@ if st.session_state.report_items:
                     add_border(slide, img_x, TOP_Y, COL, IMG_H, rgb=border_color, width_pt=1)
 
                 else:
-                    # ===== Landscape layout (requested):
-                    # Category + Description together (top), image BELOW them, footer stays same spot =====
-                
-                    TOP_Y = Inches(0.7)          # same as portrait
-                    FULL_W = SLIDE_W - (M * 2)   # full width usable
+                    # Landscape: header+desc top, image below
+                    TOP_Y = Inches(0.7)
+                    FULL_W = SLIDE_W - (M * 2)
                     GAP = Inches(0.2)
-                
-                    # Make Category + Description look like your portrait left stack
-                    HEAD = Inches(0.8)           # same header height feel
-                    DESC_H = Inches(1.45)        # tune this if you want more/less text space
-                
-                    # Header full width, same Y as portrait header
+
+                    HEAD = Inches(0.8)
+                    DESC_H = Inches(1.45)
+
                     header = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, M, TOP_Y, FULL_W, HEAD)
                     header.fill.solid()
                     header.fill.fore_color.rgb = header_color
@@ -522,14 +736,13 @@ if st.session_state.report_items:
                     p.font.size = Pt(26)
                     p.font.color.rgb = RGBColor(0, 0, 0)
                     p.alignment = PP_ALIGN.LEFT
-                
-                    # Description directly under header (connected look)
+
                     desc_y = TOP_Y + HEAD
                     desc = slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, M, desc_y, FULL_W, DESC_H)
                     desc.fill.solid()
                     desc.fill.fore_color.rgb = RGBColor(255, 255, 255)
                     desc.line.color.rgb = border_color
-                
+
                     tf = desc.text_frame
                     tf.clear()
                     tf.text = item.get("text", "")
@@ -541,30 +754,20 @@ if st.session_state.report_items:
                     p.font.size = Pt(18)
                     p.font.color.rgb = RGBColor(0, 0, 0)
                     p.alignment = PP_ALIGN.LEFT
-                
-                    # Image goes BELOW description and auto-fits above footer
+
                     img_y = desc_y + DESC_H + GAP
-                    img_h = CONTENT_BOTTOM - img_y  # CONTENT_BOTTOM already protects the footer
-                
-                    # Safety clamp so it never goes negative
+                    img_h = CONTENT_BOTTOM - img_y
                     if img_h < Inches(2.0):
-                        # If someone writes a huge description, reduce desc height to protect the image
-                        DESC_H = Inches(1.0)
-                        # Move desc shape height down
-                        desc.height = DESC_H
-                        img_y = desc_y + DESC_H + GAP
-                        img_h = CONTENT_BOTTOM - img_y
-                
+                        img_h = Inches(2.0)
+
                     try:
                         item["image"].seek(0)
                     except Exception:
                         pass
-                
                     slide.shapes.add_picture(item["image"], M, img_y, width=FULL_W, height=img_h)
                     add_border(slide, M, img_y, FULL_W, img_h, rgb=border_color, width_pt=1)
 
-
-                # Footer (same placement for BOTH layouts)
+                # Footer
                 footer_box = slide.shapes.add_textbox(M, FOOTER_Y, Inches(6), FOOTER_H)
                 fp = footer_box.text_frame.paragraphs[0]
                 fp.text = report_title
@@ -578,14 +781,27 @@ if st.session_state.report_items:
                 pp.font.color.rgb = RGBColor(80, 80, 80)
                 pp.alignment = PP_ALIGN.RIGHT
 
-            # Save once
-            binary = io.BytesIO()
-            prs.save(binary)
-            binary.seek(0)
+            ppt_buf = io.BytesIO()
+            prs.save(ppt_buf)
+            ppt_buf.seek(0)
 
-            st.session_state.generated_ppt_binary = binary
+            st.session_state.generated_ppt_binary = ppt_buf
             st.session_state.generated_filename = final_filename
             log("PPT generation complete.")
+
+            # ---------------- PDF BUILD ----------------
+            pdf_buf = build_pdf(
+                report_title,
+                report_subtitle,
+                report_address,
+                supervisors,
+                st.session_state.report_items,
+                cat_counts
+            )
+            st.session_state.generated_pdf_binary = pdf_buf
+            st.session_state.generated_pdf_filename = final_pdf_filename
+            log("PDF generation complete.")
+
             st.rerun()
 
     else:
@@ -598,8 +814,18 @@ if st.session_state.report_items:
             use_container_width=True,
         )
 
+        st.download_button(
+            label=f"Download {st.session_state.generated_pdf_filename}",
+            data=st.session_state.generated_pdf_binary,
+            file_name=st.session_state.generated_pdf_filename,
+            mime="application/pdf",
+            type="secondary",
+            use_container_width=True,
+        )
+
         if st.button("Reset / Start New Report", use_container_width=True):
             st.session_state.report_items = []
             st.session_state.generated_ppt_binary = None
+            st.session_state.generated_pdf_binary = None
             st.session_state.uploader_id += 1
             st.rerun()
